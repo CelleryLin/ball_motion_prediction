@@ -4,6 +4,8 @@ import imutils
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.optimize import curve_fit
+from numpy.polynomial import Polynomial
 
 class ObjectTracker():
     def __init__(self, greenUpper, greenLower, folder):
@@ -73,3 +75,35 @@ class ObjectTracker():
         df['camera'] = camera
 
         return df
+
+
+# curve fitting model
+# define a function for fitting
+class Parabolic3D():
+    def __init__(self, x2=0, x1=0, x0=0, y1=0, y0=0, z1=0, z0=0):
+        self.x2 = x2; self.x1 = x1; self.x0 = x0
+        self.y1 = y1; self.y0 = y0
+        self.z1 = z1; self.z0 = z0
+    
+    def func(self, t, x2, x1, x0, y1, y0, z1, z0):
+        # we have an g-force on x axis
+        Px=Polynomial([x2, x1, x0]) # 2 order
+        Py=Polynomial([y1, y0])
+        Pz=Polynomial([z1, z0])
+        return np.concatenate([Px(t), Py(t), Pz(t)])
+
+    def fit(self, t, xyz):
+        weights, _ = curve_fit(self.func, t, xyz)
+        self.x2 = weights[0]
+        self.x1 = weights[1]
+        self.x0 = weights[2]
+        self.y1 = weights[3]
+        self.y0 = weights[4]
+        self.z1 = weights[5]
+        self.z0 = weights[6]
+        
+    def predict(self, t):
+        return self.func(t, self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0)
+    
+    def get_params(self):
+        return self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0
