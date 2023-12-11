@@ -6,12 +6,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 from numpy.polynomial import Polynomial
+from scipy import ndimage
+import math
 
 class ObjectTracker():
     def __init__(self, greenUpper, greenLower, folder):
         self.greenUpper = greenUpper
         self.greenLower = greenLower
         self.folder = folder
+        self.rotL = None
+        self.rotR = None
     
     def get_mask(self, img):
         blurred = cv2.GaussianBlur(img, (11, 11), 0)
@@ -23,6 +27,41 @@ class ObjectTracker():
         mask = cv2.erode(mask, None, iterations=2)
         mask = cv2.dilate(mask, None, iterations=2)
         return mask
+    
+    def set_angle(self):
+        file_names = os.listdir(self.folder)
+        for c in ['_L_', '_R_']:
+            mean_angle = []
+            file_names_filt = [i for i in file_names if c in i]
+            for filename in file_names_filt:
+                if filename.endswith(".jpg"):
+                    img = cv2.imread(os.path.join(self.folder, filename))
+                    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    img_edges = cv2.Canny(img_gray, 100, 100, apertureSize=3)
+                    lines = cv2.HoughLinesP(img_edges, 1, math.pi / 180.0, 100, minLineLength=100, maxLineGap=5)
+                    
+                    angles = []
+                    for [[x1, y1, x2, y2]] in lines:
+                        angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+                        angles.append(angle)
+                    
+                    median_angle = np.median(angles)
+                    if median_angle <= -45:
+                        median_angle+=90
+                    elif median_angle >= 45:
+                        median_angle -= 90
+
+                    # print(median_angle)
+                    mean_angle.append(median_angle)
+                    # img_rotated = ndimage.rotate(img, median_angle)
+                    # img_rotated = cv2.resize(img_rotated, (640,480))
+                    # plt.imshow(cv2.cvtColor(img_rotated, cv2.COLOR_BGR2RGB))
+                    # plt.show()
+            if c == '_L_':
+                self.rotL = np.mean(mean_angle)
+            else:
+                self.rotR = np.mean(mean_angle)
+
 
     def get_center(self, mask):
         # find contours in the mask and initialize the current
@@ -50,6 +89,15 @@ class ObjectTracker():
         for filename in os.listdir(self.folder):
             if filename.endswith(".jpg"):
                 img = cv2.imread(os.path.join(self.folder, filename))
+
+                if self.rotL is not None:
+                    if '_L_' in filename:
+                        img = imutils.rotate(img, angle=self.rotL)
+                
+                if self.rotR is not None:
+                    if '_R_' in filename:
+                        img = imutils.rotate(img, angle=self.rotR)
+
                 mask = self.get_mask(img)
                 (x, y), radius = self.get_center(mask)
                 # draw the circle and centroid on the frame
@@ -92,7 +140,9 @@ class Parabolic3D():
         Pz=Polynomial([z1, z0])
         return np.concatenate([Px(t), Py(t), Pz(t)])
 
-    def fit(self, t, xyz):
+    def fit(self, tracked):
+        t = np.arange(len(tracked))
+        xyz = np.concatenate([tracked[:,0], tracked[:,1], tracked[:,2]])
         weights, _ = curve_fit(self.func, t, xyz)
         self.x2 = weights[0]
         self.x1 = weights[1]
@@ -103,7 +153,21 @@ class Parabolic3D():
         self.z0 = weights[6]
         
     def predict(self, t):
-        return self.func(t, self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0)
+        return self.func(t, self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0).reshape(3, -1)
+    
+    def calc_dist_error(self, tracked):
+        err = []
+        t = np.arange(len(tracked))
+        p_hat = self.predict(t).T
+        p = tracked
+        # print(p_hat, p)
+        dist = np.sqrt(np.sum(np.power((p-p_hat), 2), axis=1))
+
+        return np.mean(dist)
+
+
+        
+
     
     def get_params(self):
         return self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0
