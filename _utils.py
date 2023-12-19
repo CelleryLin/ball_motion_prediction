@@ -5,9 +5,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
+from scipy.integrate import odeint
 from numpy.polynomial import Polynomial
 from scipy import ndimage
 import math
+import sympy
 
 class ObjectTracker():
     def __init__(self, greenUpper, greenLower, folder):
@@ -133,6 +135,9 @@ class Parabolic3D():
         self.y1 = y1; self.y0 = y0
         self.z1 = z1; self.z0 = z0
     
+    def free_fall_with_res(self, t, x2, x1, x0):
+        return x2*t - x1*np.exp((t/x1)) + x0
+    
     def func(self, t, x2, x1, x0, y1, y0, z1, z0):
         # we have an g-force on x axis
         Px=Polynomial([x2, x1, x0]) # 2 order
@@ -165,9 +170,52 @@ class Parabolic3D():
 
         return np.mean(dist)
 
+    def get_params(self):
+        return self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0
 
-        
-
+# curve fitting model
+# define a function for fitting
+class Exp3D():
+    def __init__(self, x2=0, x1=0, x0=0, y1=0, y0=0, z1=0, z0=0):
+        self.x2 = x2; self.x1 = x1; self.x0 = x0
+        self.y1 = y1; self.y0 = y0
+        self.z1 = z1; self.z0 = z0
     
+    def free_fall_with_res(self, t, x2, x1, x0):
+        return x2*t - x1*np.exp((t/x1)) + x0
+    
+    def func(self, t, x2, x1, x0, y1, y0, z1, z0):
+        # we have an g-force on x axis
+        # Px=Polynomial([x2, x1, x0]) # 2 order
+        Px = self.free_fall_with_res(t, x2, x1, x0)
+        Py=Polynomial([y1, y0])
+        Pz=Polynomial([z1, z0])
+        return np.concatenate([Px, Py(t), Pz(t)])
+
+    def fit(self, tracked):
+        t = np.arange(len(tracked))
+        xyz = np.concatenate([tracked[:,0], tracked[:,1], tracked[:,2]])
+        weights, _ = curve_fit(self.func, t, xyz, p0=[1,1,1,0,0,0,0] )
+        self.x2 = weights[0]
+        self.x1 = weights[1]
+        self.x0 = weights[2]
+        self.y1 = weights[3]
+        self.y0 = weights[4]
+        self.z1 = weights[5]
+        self.z0 = weights[6]
+        
+    def predict(self, t):
+        return self.func(t, self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0).reshape(3, -1)
+    
+    def calc_dist_error(self, tracked):
+        err = []
+        t = np.arange(len(tracked))
+        p_hat = self.predict(t).T
+        p = tracked
+        # print(p_hat, p)
+        dist = np.sqrt(np.sum(np.power((p-p_hat), 2), axis=1))
+
+        return np.mean(dist)
+
     def get_params(self):
         return self.x2, self.x1, self.x0, self.y1, self.y0, self.z1, self.z0
